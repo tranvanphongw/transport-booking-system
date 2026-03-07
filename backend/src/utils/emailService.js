@@ -26,7 +26,7 @@ const sendPasswordResetEmail = async (to, otp) => {
 	const expiryMinutes = env.otpExpiryMinutes;
 
 	// Dùng smtpUser làm địa chỉ gửi để khớp tài khoản xác thực SMTP
-	const fromAddress = env.emailFrom || env.smtpUser;
+	const fromAddress = env.smtpUser || env.emailFrom;
 
 	const transporter = createTransporter();
 
