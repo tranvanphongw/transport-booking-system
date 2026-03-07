@@ -107,7 +107,7 @@ exports.forgotPassword = async (req, res) => {
     }
 
     return res.status(200).json({
-      message: "OTP sent to your email.",
+      message: "If an account is found, an OTP has been sent to the email address associated with this account.",
     });
   } catch (err) {
     console.error("[forgotPassword]", err);
