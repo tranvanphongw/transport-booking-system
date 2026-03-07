@@ -93,11 +93,18 @@ exports.forgotPassword = async (req, res) => {
       used: false,
     });
 
-    // Gửi OTP qua email (chạy ngầm để không chặn phản hồi)
+    // Gửi OTP qua email và chờ kết quả để đảm bảo gửi thành công
     const recipient = user.email;
-    sendPasswordResetEmail(recipient, otp).catch((err) => {
-      console.error("[Background Email Error]", err);
-    });
+    try {
+      await sendPasswordResetEmail(recipient, otp);
+    } catch (err) {
+      console.error("[Password Reset Email Error]", err);
+      // Nếu gửi email thất bại, xóa token đã tạo để tránh token treo
+      await PasswordResetToken.deleteMany({ user_id: user._id });
+      return res
+        .status(500)
+        .json({ message: "Failed to send OTP email. Please try again later." });
+    }
 
     return res.status(200).json({
       message: "OTP sent to your email.",
