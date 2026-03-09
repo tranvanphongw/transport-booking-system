@@ -111,3 +111,69 @@ Return the authenticated user's profile.
 ```
 
 **Error responses:** `401 MISSING_TOKEN`, `401 INVALID_TOKEN`
+
+---
+
+## POST /api/auth/forgot-password
+
+Request a password reset OTP. An OTP code will be sent to the user's email.
+
+**Auth required:** No
+
+**Request body:**
+
+```json
+{
+  "email": "user@example.com"
+}
+```
+
+| Field | Type | Required | Validation |
+|---|---|---|---|
+| `email` | string | Yes | Valid email format, must exist in system |
+
+**Response 200:**
+
+```json
+{
+  "message": "If an account is found, an OTP has been sent to the email address associated with this account."
+}
+```
+
+**Error responses:** `400 EMAIL_REQUIRED`, `500 EMAIL_SEND_FAILED`
+
+---
+
+## POST /api/auth/reset-password
+
+Verify the OTP and set a new password for the user's account.
+
+**Auth required:** No
+
+**Request body:**
+
+```json
+{
+  "email": "user@example.com",
+  "otp": "123456",
+  "new_password": "NewSecurePass1!",
+  "confirm_password": "NewSecurePass1!"
+}
+```
+
+| Field | Type | Required | Validation |
+|---|---|---|---|
+| `email` | string | Yes | Valid email format |
+| `otp` | string | Yes | 6-digit OTP received via email |
+| `new_password` | string | Yes | Min 6 chars |
+| `confirm_password` | string | Yes | Must match `new_password` |
+
+**Response 200:**
+
+```json
+{
+  "message": "Password reset successfully."
+}
+```
+
+**Error responses:** `400 PASSWORDS_DO_NOT_MATCH`, `400 INVALID_OR_EXPIRED_OTP`, `404 ACCOUNT_NOT_FOUND`
