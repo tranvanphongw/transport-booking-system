@@ -4,6 +4,16 @@ const Flight = require("../models/flights.model");
 const TrainTrip = require("../models/trainTrips.model");
 const TrainCarriage = require("../models/trainCarriages.model");
 const env = require("../config/env");
+const { emitSeatUpdate } = require("../socket");
+
+// Safe emit wrapper — no-ops if socket is not yet initialised
+function safeEmit(tripId, event, payload) {
+	try {
+		emitSeatUpdate(tripId, event, payload);
+	} catch {
+		// socket not ready during tests or early startup — silently ignore
+	}
+}
 
 // ─── Custom error class for domain errors ─────────────────────────────────────
 class SeatServiceError extends Error {
@@ -162,7 +172,7 @@ async function holdSeats({ seatIds, tripType, tripId, userId }) {
 		}),
 	);
 
-	return {
+	const result = {
 		heldSeats: savedSeats.map((seat) => ({
 			_id: seat._id,
 			seat_number: seat.seat_number,
@@ -170,6 +180,19 @@ async function holdSeats({ seatIds, tripType, tripId, userId }) {
 			holdUntil: seat.hold_expired_at,
 		})),
 	};
+
+	// Broadcast to all clients watching this trip
+	savedSeats.forEach((seat) => {
+		safeEmit(tripId, "seat_held", {
+			tripId,
+			seatId: seat._id,
+			seat_number: seat.seat_number,
+			status: seat.status,
+			updatedAt: now,
+		});
+	});
+
+	return result;
 }
 
 // ─── releaseSeats ─────────────────────────────────────────────────────────────
@@ -205,7 +228,20 @@ async function releaseSeats({ seatIds, tripId, userId }) {
 		}),
 	);
 
-	return { released: seats.map((seat) => seat._id) };
+	const releasedIds = seats.map((seat) => seat._id);
+
+	// Broadcast to all clients watching this trip
+	seats.forEach((seat) => {
+		safeEmit(tripId, "seat_released", {
+			tripId,
+			seatId: seat._id,
+			seat_number: seat.seat_number,
+			status: "AVAILABLE",
+			updatedAt: now,
+		});
+	});
+
+	return { released: releasedIds };
 }
 
 // ─── selectSeats ──────────────────────────────────────────────────────────────
@@ -289,11 +325,24 @@ async function selectSeats({ tripId, seatIds, userId }) {
 		}),
 	);
 
-	return {
+	const result = {
 		tripId,
 		selectedSeats: savedSeats.map(formatSeat),
 		holdUntil: holdExpiry,
 	};
+
+	// Broadcast to all clients watching this trip
+	savedSeats.forEach((seat) => {
+		safeEmit(tripId, "seat_held", {
+			tripId,
+			seatId: seat._id,
+			seat_number: seat.seat_number,
+			status: seat.status,
+			updatedAt: now,
+		});
+	});
+
+	return result;
 }
 
 module.exports = {

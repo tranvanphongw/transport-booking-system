@@ -1,145 +1,327 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from 'react';
-import './seat-map.css';
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import "./seat-map.css";
+import { getSocket, disconnectSocket } from "@/lib/socket";
+import config from "@/config";
 
+// ─── Types ────────────────────────────────────────────────────────────────────
 interface Seat {
-  id: string;
-  row: number;
-  col: string;
-  status: 'empty' | 'selected' | 'held' | 'booked';
-  price: number;
+  _id: string;
+  seat_number: string;
+  class: "ECONOMY" | "BUSINESS";
+  status: "AVAILABLE" | "HELD" | "BOOKED";
+  holdUntil: string | null;
+  price_modifier: number;
 }
 
-const SEAT_PRICE = 450000;
+interface SeatUpdatePayload {
+  tripId: string;
+  seatId: string;
+  seat_number: string;
+  status: "AVAILABLE" | "HELD" | "BOOKED";
+  updatedAt: string;
+}
 
+interface TripInfo {
+  flightNumber?: string;
+  departureTime: string;
+  arrivalTime: string;
+  status: string;
+}
+
+interface SeatMapData {
+  tripType: "flight" | "train";
+  tripId: string;
+  trip: TripInfo;
+  seats?: Seat[];
+  carriages?: {
+    carriageId: string;
+    carriageNumber: string;
+    type: string;
+    basePrice: number;
+    seats: Seat[];
+  }[];
+}
+
+type WsStatus = "connecting" | "connected" | "disconnected" | "reconnecting";
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+const API_BASE = config.apiBaseUrl;
+const SEAT_PRICE = config.defaultSeatPrice;
+const HOLD_DURATION_SECONDS = config.seatHoldDurationSeconds;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function formatCurrency(amount: number) {
+  return new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(amount);
+}
+
+function formatTime(seconds: number) {
+  const m = Math.floor(seconds / 60).toString().padStart(2, "0");
+  const s = (seconds % 60).toString().padStart(2, "0");
+  return `${m}:${s}`;
+}
+
+function getAuthToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("token");
+}
+
+function getSeatPrice(seat: Seat): number {
+  return SEAT_PRICE + (seat.price_modifier ?? 0);
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 export default function SeatMapPage() {
-  const [seatsData, setSeatsData] = useState<Seat[]>([]);
-  const [selectedSeats, setSelectedSeats] = useState<Seat[]>([]);
-  const [holdTimeRemaining, setHoldTimeRemaining] = useState<number>(15 * 60);
-  const [isCounting, setIsCounting] = useState<boolean>(false);
-  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [tripId, setTripId] = useState<string | null>(null);
+  const [seatMap, setSeatMap] = useState<SeatMapData | null>(null);
+  const [seats, setSeats] = useState<Seat[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isLoading, setIsLoading] = useState(true);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [wsStatus, setWsStatus] = useState<WsStatus>("connecting");
 
+  // Countdown timer
+  const [timeLeft, setTimeLeft] = useState(HOLD_DURATION_SECONDS);
+  const [isCounting, setIsCounting] = useState(false);
+  const intervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Stable ref to selectedIds for use in callbacks without stale closure issues
+  const selectedIdsRef = useRef(selectedIds);
+  useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
+
+  // ── Read tripId from URL ──────────────────────────────────────────────────
   useEffect(() => {
-    // Simulate API call
-    setTimeout(() => {
-      const rows = 10;
-      const columns = ["A", "B", "C", "D"];
-      const data: Seat[] = [];
+    const params = new URLSearchParams(window.location.search);
+    setTripId(params.get("tripId"));
+  }, []);
 
-      for (let r = 1; r <= rows; r++) {
-        columns.forEach((col) => {
-          const rand = Math.random();
-          let status: Seat['status'] = "empty";
-          if (rand < 0.15) status = "booked";
-          else if (rand > 0.85) status = "held";
-
-          data.push({
-            id: `${r}${col}`,
-            row: r,
-            col: col,
-            status: status,
-            price: SEAT_PRICE,
-          });
-        });
-      }
-      setSeatsData(data);
-    }, 500);
+  // ── Fetch seat map ────────────────────────────────────────────────────────
+  const fetchSeatMap = useCallback(async (id: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/seats/map/${id}`);
+      const json = await res.json();
+      if (!res.ok) { setError(json.message ?? "Failed to load seat map."); return; }
+      const data: SeatMapData = json.data;
+      setSeatMap(data);
+      const flatSeats: Seat[] =
+        data.tripType === "flight"
+          ? (data.seats ?? [])
+          : (data.carriages ?? []).flatMap((c) => c.seats);
+      setSeats(flatSeats);
+    } catch {
+      setError("Could not connect to server. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-    if (isCounting && holdTimeRemaining > 0) {
-      interval = setInterval(() => {
-        setHoldTimeRemaining((prev) => {
+    if (tripId) fetchSeatMap(tripId);
+  }, [tripId, fetchSeatMap]);
+
+  // ── Socket.io ─────────────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!tripId) return;
+
+    const socket = getSocket();
+
+    // Apply a single seat update from the server to local state
+    function applyUpdate(payload: SeatUpdatePayload) {
+      setSeats((prev) =>
+        prev.map((s) =>
+          s._id === payload.seatId
+            ? { ...s, status: payload.status, holdUntil: payload.updatedAt }
+            : s
+        )
+      );
+      // If the seat we had selected was claimed by someone else, deselect it
+      if (payload.status !== "AVAILABLE" && selectedIdsRef.current.has(payload.seatId)) {
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          next.delete(payload.seatId);
+          if (next.size === 0) { setIsCounting(false); setTimeLeft(HOLD_DURATION_SECONDS); }
+          return next;
+        });
+      }
+    }
+
+    socket.on("connect", () => setWsStatus("connected"));
+    socket.on("disconnect", () => setWsStatus("disconnected"));
+    socket.on("connect_error", () => setWsStatus("reconnecting"));
+    socket.on("reconnect_attempt", () => setWsStatus("reconnecting"));
+    // On successful reconnect: re-fetch to catch any missed events
+    socket.on("reconnect", () => {
+      setWsStatus("connected");
+      fetchSeatMap(tripId);
+    });
+
+    socket.on("seat_held", applyUpdate);
+    socket.on("seat_released", applyUpdate);
+    socket.on("seat_booked", applyUpdate);
+    socket.on("seat_update", applyUpdate);
+
+    socket.connect();
+    socket.emit("join_trip", tripId);
+
+    return () => {
+      socket.emit("leave_trip", tripId);
+      socket.off("connect");
+      socket.off("disconnect");
+      socket.off("connect_error");
+      socket.off("reconnect_attempt");
+      socket.off("reconnect");
+      socket.off("seat_held", applyUpdate);
+      socket.off("seat_released", applyUpdate);
+      socket.off("seat_booked", applyUpdate);
+      socket.off("seat_update", applyUpdate);
+      disconnectSocket();
+    };
+  }, [tripId, fetchSeatMap]);
+
+  // ── Countdown timer ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (isCounting) {
+      intervalRef.current = setInterval(() => {
+        setTimeLeft((prev) => {
           if (prev <= 1) {
-            clearInterval(interval);
-            handleTimeout();
+            clearInterval(intervalRef.current!);
+            handleHoldExpired();
             return 0;
           }
           return prev - 1;
         });
       }, 1000);
-    } else if (holdTimeRemaining <= 0) {
-      setIsCounting(false);
-    }
-    return () => clearInterval(interval);
-  }, [isCounting, holdTimeRemaining]);
-
-  const handleTimeout = useCallback(() => {
-    alert("Đã hết thời gian giữ ghế. Vui lòng chọn lại.");
-    setSeatsData((prevData) =>
-      prevData.map((seat) =>
-        selectedSeats.some((s) => s.id === seat.id)
-          ? { ...seat, status: "empty" }
-          : seat
-      )
-    );
-    setSelectedSeats([]);
-    setIsCounting(false);
-    setHoldTimeRemaining(15 * 60);
-  }, [selectedSeats]);
-
-  const toggleSeatSelection = (targetSeat: Seat) => {
-    if (targetSeat.status === 'booked' || targetSeat.status === 'held') return;
-
-    const isSelected = selectedSeats.some(s => s.id === targetSeat.id);
-    let newSelected: Seat[];
-
-    if (isSelected) {
-      newSelected = selectedSeats.filter(s => s.id !== targetSeat.id);
-      setSeatsData(prev => prev.map(s => s.id === targetSeat.id ? { ...s, status: 'empty' } : s));
     } else {
-      newSelected = [...selectedSeats, { ...targetSeat, status: 'selected' }];
-      setSeatsData(prev => prev.map(s => s.id === targetSeat.id ? { ...s, status: 'selected' } : s));
+      if (intervalRef.current) clearInterval(intervalRef.current);
     }
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCounting]);
 
-    setSelectedSeats(newSelected);
-
-    if (newSelected.length > 0 && !isCounting) {
-      setIsCounting(true);
-      setHoldTimeRemaining(15 * 60);
-    } else if (newSelected.length === 0) {
-      setIsCounting(false);
+  const handleHoldExpired = useCallback(() => {
+    alert("Đã hết thời gian giữ ghế. Vui lòng chọn lại.");
+    const ids = selectedIdsRef.current;
+    setSeats((prev) => prev.map((s) => ids.has(s._id) ? { ...s, status: "AVAILABLE" } : s));
+    // Release on backend — fire and forget
+    const token = getAuthToken();
+    if (token && tripId && ids.size > 0) {
+      fetch(`${API_BASE}/seats/release`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ seatIds: [...ids], tripId }),
+      }).catch(() => {});
     }
-  };
+    setSelectedIds(new Set());
+    setIsCounting(false);
+    setTimeLeft(HOLD_DURATION_SECONDS);
+  }, [tripId]);
 
-  const removeSeat = (seatId: string) => {
-    const seatTarget = seatsData.find(s => s.id === seatId);
-    if (seatTarget) toggleSeatSelection({...seatTarget, status: 'selected'});
-  };
+  // ── Toggle seat selection ─────────────────────────────────────────────────
+  const toggleSeat = useCallback((seat: Seat) => {
+    if (seat.status === "BOOKED" || seat.status === "HELD") return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(seat._id)) {
+        next.delete(seat._id);
+      } else {
+        next.add(seat._id);
+      }
+      if (next.size > 0 && !isCounting) {
+        setIsCounting(true);
+        setTimeLeft(HOLD_DURATION_SECONDS);
+      } else if (next.size === 0) {
+        setIsCounting(false);
+        setTimeLeft(HOLD_DURATION_SECONDS);
+      }
+      return next;
+    });
+  }, [isCounting]);
 
-  const handleContinue = () => {
-    if (selectedSeats.length === 0) return;
+  // ── Continue → POST /seats/select ─────────────────────────────────────────
+  const handleContinue = async () => {
+    if (selectedIds.size === 0 || !tripId) return;
     setIsProcessing(true);
-    setTimeout(() => {
-      const seatIds = selectedSeats.map(s => s.id).join(", ");
-      alert(`Giữ ghế thành công!\nCác ghế: ${seatIds}\nChuyển sang trang nhập thông tin hành khách...`);
+    setApiError(null);
+    const token = getAuthToken();
+    if (!token) {
+      setApiError("Bạn cần đăng nhập để đặt ghế.");
       setIsProcessing(false);
-    }, 800);
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/seats/select`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ tripId, seatIds: [...selectedIds] }),
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setApiError(json.message ?? "Đặt ghế thất bại. Vui lòng thử lại.");
+        return;
+      }
+      const confirmed: Seat[] = json.data?.selectedSeats ?? [];
+      setSeats((prev) =>
+        prev.map((s) => {
+          const u = confirmed.find((c) => c._id === s._id);
+          return u ? { ...u } : s;
+        })
+      );
+      alert(`Giữ ghế thành công!\nCác ghế: ${confirmed.map((s) => s.seat_number).join(", ")}\nChuyển sang trang nhập thông tin hành khách...`);
+    } catch {
+      setApiError("Không thể kết nối đến máy chủ. Vui lòng thử lại.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("vi-VN", {
-      style: "currency",
-      currency: "VND",
-    }).format(amount);
-  };
+  // ── Computed ──────────────────────────────────────────────────────────────
+  const selectedSeats = seats.filter((s) => selectedIds.has(s._id));
+  const totalPrice = selectedSeats.reduce((sum, s) => sum + getSeatPrice(s), 0);
 
-  const formatTime = (seconds: number) => {
-    const m = Math.floor(seconds / 60).toString().padStart(2, "0");
-    const s = (seconds % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
-  };
-
-  const totalPrice = selectedSeats.reduce((sum, seat) => sum + seat.price, 0);
-
-  // Group seats by row
-  const rowsData: Record<number, Seat[]> = {};
-  seatsData.forEach(seat => {
-    if (!rowsData[seat.row]) rowsData[seat.row] = [];
-    rowsData[seat.row].push(seat);
+  const seatRows = new Map<string, Seat[]>();
+  seats.forEach((s) => {
+    const row = s.seat_number.replace(/[A-Z]/g, "");
+    if (!seatRows.has(row)) seatRows.set(row, []);
+    seatRows.get(row)!.push(s);
   });
+
+  const getSeatClass = (seat: Seat) => {
+    if (selectedIds.has(seat._id)) return "status-selected";
+    return `status-${seat.status.toLowerCase()}`;
+  };
+
+  // WS status badge styling
+  const wsBadgeStyle: React.CSSProperties = {
+    display: "inline-flex", alignItems: "center", gap: "0.35rem",
+    fontSize: "0.75rem", padding: "0.2rem 0.6rem", borderRadius: "999px",
+    fontWeight: 500,
+    background: wsStatus === "connected" ? "#dcfce7" : wsStatus === "connecting" ? "#fef9c3" : "#fee2e2",
+    color: wsStatus === "connected" ? "#166534" : wsStatus === "connecting" ? "#854d0e" : "#991b1b",
+  };
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <div className="app-container" style={{ textAlign: "center", paddingTop: "4rem" }}>
+        <i className="fa-solid fa-spinner fa-spin" style={{ fontSize: "2rem", color: "#2563eb" }} />
+        <p style={{ marginTop: "1rem", color: "#64748b" }}>Đang tải sơ đồ ghế...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="app-container" style={{ textAlign: "center", paddingTop: "4rem" }}>
+        <i className="fa-solid fa-circle-exclamation" style={{ fontSize: "2rem", color: "#ef4444" }} />
+        <p style={{ marginTop: "1rem", color: "#ef4444" }}>{error}</p>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -147,66 +329,61 @@ export default function SeatMapPage() {
       <div className="app-container">
         {/* Header */}
         <header className="page-header">
-          <button className="back-link" aria-label="Quay lại">
-            <i className="fa-solid fa-arrow-left"></i>
+          <button className="back-link" aria-label="Quay lại" onClick={() => history.back()}>
+            <i className="fa-solid fa-arrow-left" />
           </button>
           <h1>Chọn ghế chuyến đi</h1>
+          {/* Real-time connection badge */}
+          <span style={wsBadgeStyle}>
+            <span style={{
+              width: 7, height: 7, borderRadius: "50%",
+              background: wsStatus === "connected" ? "#16a34a" : wsStatus === "connecting" ? "#ca8a04" : "#dc2626",
+              display: "inline-block",
+            }} />
+            {wsStatus === "connected" ? "Đồng bộ thời gian thực" : wsStatus === "connecting" ? "Đang kết nối..." : "Mất kết nối"}
+          </span>
         </header>
 
         <div className="main-content">
-          {/* Left Column */}
+          {/* ─ Left Panel ─ */}
           <div className="left-panel">
             {/* Trip Info */}
-            <section className="trip-info-card card">
-              <div className="trip-header">
-                <span className="trip-code">
-                  <i className="fa-solid fa-plane-departure"></i> VJ123
-                </span>
-                <span className="trip-status">Đang mở bán</span>
-              </div>
-              <div className="trip-details">
-                <div className="route">
-                  <div className="location">
-                    <strong>SGN</strong>
-                    <span className="city">TP. Hồ Chí Minh</span>
-                  </div>
-                  <div className="path-connector">
-                    <i className="fa-solid fa-arrow-right"></i>
-                  </div>
-                  <div className="location">
-                    <strong>HAN</strong>
-                    <span className="city">Hà Nội</span>
+            {seatMap && (
+              <section className="trip-info-card card">
+                <div className="trip-header">
+                  <span className="trip-code">
+                    <i className="fa-solid fa-plane-departure" />{" "}
+                    {seatMap.trip.flightNumber ?? seatMap.tripId}
+                  </span>
+                  <span className="trip-status">{seatMap.trip.status}</span>
+                </div>
+                <div className="trip-details">
+                  <div className="time-info">
+                    <div className="time-item">
+                      <i className="fa-regular fa-calendar" />
+                      <span>{new Date(seatMap.trip.departureTime).toLocaleDateString("vi-VN")}</span>
+                    </div>
+                    <div className="time-item">
+                      <i className="fa-regular fa-clock" />
+                      <span>
+                        {new Date(seatMap.trip.departureTime).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                        {" → "}
+                        {new Date(seatMap.trip.arrivalTime).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
                   </div>
                 </div>
-                <div className="time-info">
-                  <div className="time-item">
-                    <i className="fa-regular fa-calendar"></i>
-                    <span>15/10/2026</span>
-                  </div>
-                  <div className="time-item">
-                    <i className="fa-regular fa-clock"></i>
-                    <span>10:30 (Dự kiến đến 12:40)</span>
-                  </div>
-                </div>
-              </div>
-            </section>
+              </section>
+            )}
 
             {/* Legend */}
             <section className="legend-area card">
               <h3>Chú thích</h3>
               <div className="legend-items">
-                <div className="legend-item">
-                  <div className="seat-badge empty"></div> Ghế trống
-                </div>
-                <div className="legend-item">
-                  <div className="seat-badge selected"></div> Đang chọn
-                </div>
-                <div className="legend-item">
-                  <div className="seat-badge held"></div> Đang giữ
-                </div>
-                <div className="legend-item">
-                  <div className="seat-badge booked"></div> Đã đặt / Ko bán
-                </div>
+                <div className="legend-item"><div className="seat-badge empty" /> Ghế trống</div>
+                <div className="legend-item"><div className="seat-badge selected" /> Đang chọn</div>
+                <div className="legend-item"><div className="seat-badge held" /> Đang giữ</div>
+                <div className="legend-item"><div className="seat-badge booked" /> Đã đặt / Ko bán</div>
               </div>
             </section>
 
@@ -216,39 +393,39 @@ export default function SeatMapPage() {
                 <h3>Sơ đồ ghế ngồi</h3>
                 <p>Vui lòng click vào ghế trống để chọn.</p>
               </div>
-
               <div className="seat-map-container">
                 <div className="seat-map-grid" id="seat-map-grid">
-                  {Object.keys(rowsData).map((rowIndexStr) => {
-                    const rowIndex = Number(rowIndexStr);
-                    const row = rowsData[rowIndex];
-                    const leftGroup = row.filter(s => ["A", "B"].includes(s.col));
-                    const rightGroup = row.filter(s => ["C", "D"].includes(s.col));
-
+                  {Array.from(seatRows.entries()).map(([rowLabel, rowSeats]) => {
+                    const leftGroup = rowSeats.filter((s) => ["A", "B"].some((c) => s.seat_number.endsWith(c)));
+                    const rightGroup = rowSeats.filter((s) => ["C", "D"].some((c) => s.seat_number.endsWith(c)));
                     return (
-                      <div key={rowIndex} className="seat-row">
+                      <div key={rowLabel} className="seat-row">
                         <div className="seat-group">
-                          {leftGroup.map(seat => (
-                            <div 
-                              key={seat.id}
-                              className={`seat status-${seat.status}`}
-                              title={`Ghế ${seat.id} - ${formatCurrency(seat.price)}`}
-                              onClick={() => toggleSeatSelection(seat)}
+                          {leftGroup.map((seat) => (
+                            <div
+                              key={seat._id}
+                              className={`seat ${getSeatClass(seat)}`}
+                              title={`Ghế ${seat.seat_number} — ${formatCurrency(getSeatPrice(seat))}`}
+                              onClick={() => toggleSeat(seat)}
                             >
-                              {seat.status === 'booked' ? <i className="fa-solid fa-xmark"></i> : seat.id}
+                              {seat.status === "BOOKED" ? <i className="fa-solid fa-xmark" /> :
+                               seat.status === "HELD" && !selectedIds.has(seat._id) ? <i className="fa-solid fa-lock" /> :
+                               seat.seat_number}
                             </div>
                           ))}
                         </div>
-                        <div className="row-label">{rowIndex}</div>
+                        <div className="row-label">{rowLabel}</div>
                         <div className="seat-group">
-                          {rightGroup.map(seat => (
-                            <div 
-                              key={seat.id}
-                              className={`seat status-${seat.status}`}
-                              title={`Ghế ${seat.id} - ${formatCurrency(seat.price)}`}
-                              onClick={() => toggleSeatSelection(seat)}
+                          {rightGroup.map((seat) => (
+                            <div
+                              key={seat._id}
+                              className={`seat ${getSeatClass(seat)}`}
+                              title={`Ghế ${seat.seat_number} — ${formatCurrency(getSeatPrice(seat))}`}
+                              onClick={() => toggleSeat(seat)}
                             >
-                              {seat.status === 'booked' ? <i className="fa-solid fa-xmark"></i> : seat.id}
+                              {seat.status === "BOOKED" ? <i className="fa-solid fa-xmark" /> :
+                               seat.status === "HELD" && !selectedIds.has(seat._id) ? <i className="fa-solid fa-lock" /> :
+                               seat.seat_number}
                             </div>
                           ))}
                         </div>
@@ -260,7 +437,7 @@ export default function SeatMapPage() {
             </section>
           </div>
 
-          {/* Right Column */}
+          {/* ─ Right Panel ─ */}
           <div className="right-panel">
             <div className="summary-card card sticky">
               <h2>Chi tiết đặt chỗ</h2>
@@ -268,9 +445,16 @@ export default function SeatMapPage() {
               {isCounting && (
                 <div className="countdown-wrapper" id="countdown-wrapper">
                   <div className="countdown-label">
-                    <i className="fa-regular fa-clock"></i> Thời gian giữ ghế
+                    <i className="fa-regular fa-clock" /> Thời gian giữ ghế
                   </div>
-                  <div className="countdown-timer" id="timer-display">{formatTime(holdTimeRemaining)}</div>
+                  <div className="countdown-timer" id="timer-display">{formatTime(timeLeft)}</div>
+                </div>
+              )}
+
+              {apiError && (
+                <div style={{ background: "#fef2f2", border: "1px solid #fecaca", borderRadius: "8px", padding: "0.75rem 1rem", marginBottom: "1rem", color: "#b91c1c", fontSize: "0.9rem" }}>
+                  <i className="fa-solid fa-triangle-exclamation" style={{ marginRight: "0.5rem" }} />
+                  {apiError}
                 </div>
               )}
 
@@ -280,17 +464,13 @@ export default function SeatMapPage() {
                   {selectedSeats.length === 0 ? (
                     <div className="empty-state">Chưa có ghế nào được chọn</div>
                   ) : (
-                    selectedSeats.map(seat => (
-                      <div key={seat.id} className="selected-seat-item">
-                        <div>Ghế <strong>{seat.id}</strong></div>
-                        <div>{formatCurrency(seat.price)}
-                          <button 
-                            className="btn-remove-seat" 
-                            aria-label="Xóa ghế"
-                            onClick={() => removeSeat(seat.id)}
-                            data-id={seat.id}
-                          >
-                            <i className="fa-solid fa-trash-can"></i>
+                    selectedSeats.map((seat) => (
+                      <div key={seat._id} className="selected-seat-item">
+                        <div>Ghế <strong>{seat.seat_number}</strong></div>
+                        <div>
+                          {formatCurrency(getSeatPrice(seat))}
+                          <button className="btn-remove-seat" aria-label="Xóa ghế" onClick={() => toggleSeat(seat)}>
+                            <i className="fa-solid fa-trash-can" />
                           </button>
                         </div>
                       </div>
@@ -307,17 +487,19 @@ export default function SeatMapPage() {
               </div>
 
               <div className="action-buttons">
-                <button className="btn btn-secondary"><i className="fa-solid fa-arrow-left"></i> Quay lại</button>
-                <button 
-                  className="btn btn-primary" 
+                <button className="btn btn-secondary" onClick={() => history.back()}>
+                  <i className="fa-solid fa-arrow-left" /> Quay lại
+                </button>
+                <button
+                  className="btn btn-primary"
                   id="btn-continue"
                   disabled={selectedSeats.length === 0 || isProcessing}
                   onClick={handleContinue}
                 >
                   {isProcessing ? (
-                    <><i className="fa-solid fa-spinner fa-spin"></i> Đang xử lý...</>
+                    <><i className="fa-solid fa-spinner fa-spin" /> Đang xử lý...</>
                   ) : (
-                    <>Tiếp tục <i className="fa-solid fa-arrow-right"></i></>
+                    <>Tiếp tục <i className="fa-solid fa-arrow-right" /></>
                   )}
                 </button>
               </div>
