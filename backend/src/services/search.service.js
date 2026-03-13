@@ -15,12 +15,14 @@ const findFlights = async ({ origin, destination, departureDate, passengers = 1,
   if (!origin || !destination || !departureDate) {
     const error = new Error('Missing required search parameters');
     error.status = 400;
+    error.code = 'VALIDATION_ERROR';
     throw error;
   }
 
   if (origin.toUpperCase() === destination.toUpperCase()) {
     const error = new Error('Điểm đi và điểm đến không được trùng nhau');
     error.status = 400;
+    error.code = 'VALIDATION_ERROR';
     throw error;
   }
 
@@ -122,7 +124,12 @@ const findFlights = async ({ origin, destination, departureDate, passengers = 1,
  * TÌM KIẾM CHUYẾN TÀU
  */
 const findTrainTrips = async ({ origin, destination, departureDate, passengers = 1, sort, page = 1, limit = 20, filters = {} }) => {
-  if (!origin || !destination || !departureDate) throw new Error('Missing parameters');
+  if (!origin || !destination || !departureDate) {
+    const error = new Error('Missing parameters');
+    error.status = 400;
+    error.code = 'VALIDATION_ERROR';
+    throw error;
+  }
 
   const [originStation, destStation] = await Promise.all([
     TrainStation.findOne({ name: origin }),
@@ -168,7 +175,7 @@ const findTrainTrips = async ({ origin, destination, departureDate, passengers =
     .populate('arrival_station_id', 'name city')
     .lean();
 
-// Gắn giá thấp nhất theo ĐÚNG HẠNG GHẾ để Frontend hiển thị và Sort
+  // Gắn giá thấp nhất theo ĐÚNG HẠNG GHẾ để Frontend hiển thị và Sort
   for (const t of trips) {
     const carriageCondition = { train_trip_id: t._id };
     
@@ -195,4 +202,69 @@ const findTrainTrips = async ({ origin, destination, departureDate, passengers =
   };
 };
 
-module.exports = { findFlights, findTrainTrips };
+// ==========================================
+// TÍNH NĂNG: XEM CHI TIẾT CHUYẾN ĐI
+// ==========================================
+
+const getFlightDetails = async (flightId) => {
+  const flight = await Flight.findById(flightId)
+    .populate('airline_id', 'name iata_code logo_url')
+    .populate('departure_airport_id', 'name city country iata_code')
+    .populate('arrival_airport_id', 'name city country iata_code')
+    .lean();
+
+  if (!flight) {
+    const error = new Error('Không tìm thấy chuyến bay');
+    error.status = 404;
+    error.code = 'TRIP_NOT_FOUND';
+    throw error;
+  }
+  if (flight.status === 'CANCELLED') {
+    const error = new Error('Chuyến bay này đã bị hủy');
+    error.status = 400;
+    error.code = 'TRIP_CANCELLED';
+    throw error;
+  }
+
+  // Đếm số ghế trống cho từng hạng để giao diện hiển thị
+  const availableEconomy = await Seat.countDocuments({ flight_id: flightId, class: 'ECONOMY', status: 'AVAILABLE' });
+  const availableBusiness = await Seat.countDocuments({ flight_id: flightId, class: 'BUSINESS', status: 'AVAILABLE' });
+
+  return { 
+    ...flight, 
+    available_seats: { economy: availableEconomy, business: availableBusiness } 
+  };
+};
+
+const getTrainTripDetails = async (tripId) => {
+  const trip = await TrainTrip.findById(tripId)
+    .populate('train_id', 'train_number name')
+    .populate('departure_station_id', 'name city')
+    .populate('arrival_station_id', 'name city')
+    .lean();
+
+  if (!trip) {
+    const error = new Error('Không tìm thấy chuyến tàu');
+    error.status = 404;
+    error.code = 'TRIP_NOT_FOUND';
+    throw error;
+  }
+  if (trip.status === 'CANCELLED') {
+    const error = new Error('Chuyến tàu này đã bị hủy');
+    error.status = 400;
+    error.code = 'TRIP_CANCELLED';
+    throw error;
+  }
+
+  // Lấy thông tin toa tàu để biết giá của từng hạng ghế
+  const carriages = await TrainCarriage.find({ train_trip_id: tripId }).lean();
+  return { ...trip, carriages_info: carriages };
+};
+
+// EXPORT TOÀN BỘ CÁC HÀM
+module.exports = { 
+  findFlights, 
+  findTrainTrips, 
+  getFlightDetails, 
+  getTrainTripDetails 
+};
