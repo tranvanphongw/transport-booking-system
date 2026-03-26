@@ -47,7 +47,7 @@ function SearchResults() {
     const [total, setTotal] = useState(0);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
-    
+
     // 🔥 Thêm BaseFilterCounts để khóa số đếm
     const [baseFilterCounts, setBaseFilterCounts] = useState<any>({});
 
@@ -93,10 +93,10 @@ function SearchResults() {
                 if (response.data.success) {
                     setResults(response.data.data.items);
                     setTotal(response.data.data.pagination?.totalItems || response.data.data.total);
-                    
+
                     const counts = response.data.data.filter_counts || {};
                     const hasFilters = searchParams.has('airlines') || searchParams.has('times') || searchParams.has('stops') || searchParams.has('min_price') || searchParams.has('max_price');
-                    
+
                     // 🔥 Logic khóa số đếm gốc (chỉ cập nhật nếu chưa có bộ lọc nào được chọn)
                     if (!hasFilters || Object.keys(baseFilterCounts).length === 0) {
                         setBaseFilterCounts(counts);
@@ -110,15 +110,15 @@ function SearchResults() {
             }
         };
         fetchResults();
-        
+
         setSearchType(type); setSearchOrigin(origin); setSearchDest(destination); setSearchDate(departureDate);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [searchParams, type, origin, destination, departureDate]);
 
-    const carrierOptions = type === 'flight' 
-        ? [{ id: 'VN', name: 'Vietnam Airlines' }, { id: 'VJ', name: 'Vietjet Air' }, { id: 'QH', name: 'Bamboo Airways' }] 
+    const carrierOptions = type === 'flight'
+        ? [{ id: 'VN', name: 'Vietnam Airlines' }, { id: 'VJ', name: 'Vietjet Air' }, { id: 'QH', name: 'Bamboo Airways' }]
         : [{ id: 'SE', name: 'SE (Express)' }, { id: 'TN', name: 'TN (Night train)' }, { id: 'L', name: 'Local' }];
-    
+
     const stopOptions = type === 'flight'
         ? [{ id: 'direct', label: 'Non-stop' }, { id: '1stop', label: '1 stop' }, { id: '2stops', label: '2+ stops' }]
         : [{ id: 'direct', label: 'Direct' }, { id: '1stop', label: '1 transfer' }, { id: '2stops', label: '2+ transfers' }];
@@ -129,17 +129,17 @@ function SearchResults() {
     return (
         <div className="min-h-screen bg-gray-50 pt-24 pb-12">
             <div className="max-w-7xl mx-auto px-4">
-                
+
                 {/* --- TOP BAR (Đã cập nhật Select Box) --- */}
                 <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 mb-8 flex flex-col md:flex-row gap-4 items-center justify-between z-20 relative">
                     <div className="flex flex-wrap gap-4 w-full md:w-auto">
-                        
+
                         {/* Dropdown Từ (Origin) */}
                         <div className="flex flex-col flex-1 min-w-[140px]">
                             <span className="text-[10px] text-gray-500 font-bold ml-1 mb-1 uppercase tracking-wider">From</span>
-                            <select 
-                                value={searchOrigin} 
-                                onChange={e => setSearchOrigin(e.target.value)} 
+                            <select
+                                value={searchOrigin}
+                                onChange={e => setSearchOrigin(e.target.value)}
                                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold focus:border-blue-500 focus:ring-1 outline-none cursor-pointer bg-white"
                             >
                                 <option value="" disabled>-- Chọn điểm đi --</option>
@@ -148,13 +148,13 @@ function SearchResults() {
                                 ))}
                             </select>
                         </div>
-                        
+
                         {/* Dropdown Đến (Destination) */}
                         <div className="flex flex-col flex-1 min-w-[140px]">
                             <span className="text-[10px] text-gray-500 font-bold ml-1 mb-1 uppercase tracking-wider">To</span>
-                            <select 
-                                value={searchDest} 
-                                onChange={e => setSearchDest(e.target.value)} 
+                            <select
+                                value={searchDest}
+                                onChange={e => setSearchDest(e.target.value)}
                                 className="w-full border border-gray-200 rounded-xl px-3 py-2 text-sm font-bold focus:border-blue-500 focus:ring-1 outline-none cursor-pointer bg-white"
                             >
                                 <option value="" disabled>-- Chọn điểm đến --</option>
@@ -169,7 +169,7 @@ function SearchResults() {
                             <input type="date" value={searchDate} onChange={e => setSearchDate(e.target.value)} className="w-full border border-gray-200 rounded-xl px-4 py-2 text-sm font-bold focus:border-blue-500 focus:ring-1 outline-none" />
                         </div>
                     </div>
-                    
+
                     <div className="flex gap-2 w-full md:w-auto mt-2 md:mt-0">
                         <button onClick={() => { setSearchType('flight'); setSearchOrigin(''); setSearchDest(''); }} className={`flex-1 md:flex-none px-6 py-2.5 rounded-full text-sm font-bold border transition-colors flex items-center justify-center gap-2 ${searchType === 'flight' ? 'bg-blue-50 text-blue-600 border-blue-200' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                             <Plane size={16} /> Flights
@@ -185,7 +185,7 @@ function SearchResults() {
                 </div>
 
                 <div className="flex flex-col lg:flex-row gap-8 items-start">
-                    
+
                     {/* --- CỘT TRÁI: BỘ LỌC ĐỘNG --- */}
                     <aside className="w-full lg:w-64 space-y-6 shrink-0 sticky top-24">
                         <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
@@ -280,11 +280,11 @@ function SearchResults() {
                                     Route: {origin} → {destination} • Date: {new Date(departureDate).toLocaleDateString('en-GB')} • {total} results
                                 </p>
                             </div>
-                            
+
                             {/* 🔥 DROPDOWN SORT (Sắp xếp sống) */}
                             <div className="flex items-center gap-2 text-sm border border-gray-200 rounded-lg bg-white px-3 py-2 relative">
                                 <span className="text-gray-500 whitespace-nowrap">Sort by</span>
-                                <select 
+                                <select
                                     className="font-bold text-gray-800 outline-none bg-transparent appearance-none pr-4 cursor-pointer z-10"
                                     value={sort}
                                     onChange={(e) => updateURL({ sort: e.target.value, page: 1 })}
@@ -311,7 +311,7 @@ function SearchResults() {
                             <div className="space-y-4">
                                 {results.map((trip: any) => (
                                     <div key={trip._id} className="bg-white border border-gray-200 rounded-2xl p-5 flex flex-col lg:flex-row justify-between items-center gap-6 hover:border-blue-400 hover:shadow-md transition-all">
-                                        
+
                                         {/* Hãng / Code */}
                                         <div className="flex items-center gap-4 w-full lg:w-56 shrink-0">
                                             <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center font-black text-gray-600 text-xs border border-gray-100">
@@ -330,16 +330,16 @@ function SearchResults() {
                                         {/* Giờ giấc & Điểm dừng */}
                                         <div className="flex items-center gap-4 flex-1 justify-center w-full">
                                             <div className="text-center w-16">
-                                                <div className="font-black text-gray-900 text-lg">{new Date(trip.departure_time).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'})}</div>
+                                                <div className="font-black text-gray-900 text-lg">{new Date(trip.departure_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</div>
                                                 <div className="text-[10px] font-bold text-gray-400 mt-1">{origin}</div>
                                             </div>
-                                            
+
                                             <div className="flex-1 max-w-[120px] mx-4 relative">
                                                 <div className="w-full border-t border-gray-300"></div>
                                             </div>
 
                                             <div className="text-center w-16">
-                                                <div className="font-black text-gray-900 text-lg">{new Date(trip.arrival_time).toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'})}</div>
+                                                <div className="font-black text-gray-900 text-lg">{new Date(trip.arrival_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</div>
                                                 <div className="text-[10px] font-bold text-gray-400 mt-1">{destination}</div>
                                             </div>
 
@@ -364,7 +364,7 @@ function SearchResults() {
                                                 {new Intl.NumberFormat('vi-VN').format(trip.prices?.economy || trip.starting_price || 0)}đ
                                             </div>
                                             <div className="text-[10px] font-bold text-gray-400 mb-3">from / pax</div>
-                                            <Link 
+                                            <Link
                                                 href={type === 'flight' ? `/flights/${trip._id}` : `/train-trips/${trip._id}`}
                                                 className="w-full lg:w-auto bg-blue-600 text-white px-8 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition-colors shadow-sm"
                                             >
@@ -379,8 +379,8 @@ function SearchResults() {
                         {/* Phân trang */}
                         {total > 0 && (
                             <div className="flex justify-center items-center gap-4 mt-12 pb-8">
-                                <button disabled={page <= 1} onClick={() => updateURL({ page: page - 1 })} className="p-2 rounded-lg border border-gray-200 disabled:opacity-30 hover:border-blue-500 transition-all bg-white"><ChevronLeft size={20}/></button>
-                                <button disabled={results.length < 10} onClick={() => updateURL({ page: page + 1 })} className="p-2 rounded-lg border border-gray-200 disabled:opacity-30 hover:border-blue-500 transition-all bg-white"><ChevronRight size={20}/></button>
+                                <button disabled={page <= 1} onClick={() => updateURL({ page: page - 1 })} className="p-2 rounded-lg border border-gray-200 disabled:opacity-30 hover:border-blue-500 transition-all bg-white"><ChevronLeft size={20} /></button>
+                                <button disabled={results.length < 10} onClick={() => updateURL({ page: page + 1 })} className="p-2 rounded-lg border border-gray-200 disabled:opacity-30 hover:border-blue-500 transition-all bg-white"><ChevronRight size={20} /></button>
                             </div>
                         )}
                     </main>
