@@ -86,7 +86,7 @@ const findFlights = async ({
 
   // ─── BƯỚC 1: Lọc FlightFare theo hạng ghế + giá ───────────────────────────
   const seatClass = filters.seat_class ? filters.seat_class.toLowerCase() : "economy";
-  const cabinClass = seatClass.toUpperCase(); // ECONOMY | BUSINESS | ...
+  const cabinClass = seatClass.toUpperCase();
 
   let validFlightIds = null;
   const fareQuery = { is_active: true, cabin_class: cabinClass };
@@ -123,12 +123,19 @@ const findFlights = async ({
   }
 
 
+  const now = new Date();
   if (departureDate) {
     const startOfDay = new Date(departureDate);
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(departureDate);
     endOfDay.setHours(23, 59, 59, 999);
-    query.departure_time = { $gte: startOfDay, $lte: endOfDay };
+
+    query.departure_time = {
+      $gte: startOfDay < now ? now : startOfDay,
+      $lte: endOfDay
+    };
+  } else {
+    query.departure_time = { $gte: now };
   }
 
   if (filters.airlines) {
@@ -154,7 +161,6 @@ const findFlights = async ({
 
   const validFlights = [];
   for (const flight of flights) {
- 
     let isTimeValid = true;
     if (filters.times) {
       const selectedTimes = filters.times.split(",");
@@ -204,10 +210,10 @@ const findFlights = async ({
     if (airlineCode) {
       filter_counts.airlines[airlineCode] = (filter_counts.airlines[airlineCode] || 0) + 1;
     }
-    
+
     const vnTime = new Date(new Date(flight.departure_time).getTime() + 7 * 60 * 60 * 1000);
     const hour = vnTime.getUTCHours();
-    
+
     if (hour >= 0 && hour < 6) filter_counts.departure_time.morning += 1;
     else if (hour >= 6 && hour < 12) filter_counts.departure_time.noon += 1;
     else if (hour >= 12 && hour < 18) filter_counts.departure_time.afternoon += 1;
@@ -276,12 +282,19 @@ const findTrainTrips = async ({
     query.arrival_station_id = destStation._id;
   }
 
+
+  const now = new Date();
   if (departureDate) {
     const searchDate = new Date(departureDate);
     searchDate.setHours(0, 0, 0, 0);
     const end = new Date(searchDate);
     end.setHours(23, 59, 59, 999);
-    query.departure_time = { $gte: searchDate, $lte: end };
+    query.departure_time = {
+      $gte: searchDate < now ? now : searchDate,
+      $lte: end
+    };
+  } else {
+    query.departure_time = { $gte: now };
   }
 
   const trips = await TrainTrip.find(query)
@@ -292,11 +305,23 @@ const findTrainTrips = async ({
 
   const validTrips = [];
   for (const trip of trips) {
-    //LỌC KHUNG GIỜ CHO TÀU HỎA
+
+    if (filters.airlines) {
+      const selectedTrains = filters.airlines.split(",");
+      // Lấy mã tàu hiện tại (ưu tiên train_number, nếu không có thì lấy name)
+      const currentTrainCode = trip.train_id?.train_number || trip.train_id?.name || "TRAIN";
+
+      // Nếu mã tàu của chuyến này không nằm trong mảng khách đang tick -> Đá văng ra ngoài luôn
+      if (!selectedTrains.includes(currentTrainCode)) {
+        continue;
+      }
+    }
+
+    // LỌC KHUNG GIỜ CHO TÀU HỎA
     let isTimeValid = true;
     if (filters.times) {
       const selectedTimes = filters.times.split(",");
-     
+
       const vnTime = new Date(new Date(trip.departure_time).getTime() + 7 * 60 * 60 * 1000);
       const hour = vnTime.getUTCHours();
 
@@ -429,7 +454,6 @@ const getTrainTripDetails = async (tripId) => {
 
   const carriages = await TrainCarriage.find({ train_trip_id: tripId }).lean();
 
-  
   const pricesObj = {};
   carriages.forEach((carriage) => {
     if (carriage.type && carriage.base_price) {
@@ -441,8 +465,8 @@ const getTrainTripDetails = async (tripId) => {
     }
   });
 
-  return { 
-    ...trip, 
+  return {
+    ...trip,
     carriages_info: carriages,
     prices: pricesObj // Đính kèm cục giá này vào là Frontend tự nhận diện được ngay!
   };
