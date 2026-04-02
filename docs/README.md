@@ -1,115 +1,78 @@
-📘 Transport Booking System – Documentation Hub
+🚀 Transport Booking System - Search Module
+Dự án này là hệ thống đặt vé máy bay và tàu hỏa trực tuyến. Tôi chịu trách nhiệm chính cho Module Search (Tìm kiếm & Tra cứu) — đây là "cửa ngõ" quan trọng nhất, nơi bắt đầu hành trình trải nghiệm của khách hàng.
 
-1️⃣ Mục đích của thư mục docs/
-Thư mục docs/ là nguồn sự thật (Single Source of Truth) cho toàn bộ hệ thống đặt vé máy bay & tàu hỏa.
-Tất cả thành viên bắt buộc phải bám theo tài liệu trong thư mục này khi:
-Thiết kế Database
-Viết Prisma schema
-Xây dựng API
-Thiết kế frontend
-Thực hiện merge code
-Mục tiêu chính:
-Ngăn chặn việc mỗi người code theo một cách khác nhau
-Giảm conflict khi merge
-Đảm bảo hệ thống đúng theo file đặc tả
+👤 Thông tin thành viên
+Họ tên: Phong
 
-🧭 2️⃣ Cấu trúc tài liệu
-🔹 A. Nghiệp vụ hệ thống (Business Specification)
-File Mô tả
-00-overview.md Tổng quan hệ thống, mục tiêu, phạm vi
-01-roles-permissions.md Phân quyền User/Admin
-02-functional-modules.md Module chức năng theo đặc tả
-03-sitemap-pages.md Danh sách trang Client & Admin
+Vai trò: Backend & Frontend Developer (Search Module)
 
-🔹 B. Thiết kế kỹ thuật (System Design)
-File Mô tả
-10-architecture.md Kiến trúc FE – BE – DB
-11-realtime-seat-hold.md Thiết kế giữ ghế realtime
-12-payment-flow.md Flow thanh toán & trạng thái booking
+Phạm vi phụ trách: Xây dựng luồng tìm kiếm chuyến bay/tàu, bộ lọc nâng cao, trang chi tiết chuyến đi và tích hợp kiểm tra tình trạng chỗ trống.
 
-🔹 C. Database (Prisma + Postgres)
-📁 20-database/
-File Mô tả
-erd.md ERD + quan hệ giữa các bảng
-data-dictionary.md Giải thích chi tiết từng bảng & field
-prisma-schema-guidelines.md Quy ước viết schema.prisma
-migrations.md Quy trình migrate & seed dữ liệu
-⚠️ Mọi thay đổi DB bắt buộc phải:
-Cập nhật docs
-Tạo migration
-Không được chỉnh sửa trực tiếp production schema
+🛠 Công nghệ sử dụng (Gợi ý)
+Frontend: Next.js / React, Tailwind CSS.
 
-🔹 D. API Contract (FE ↔ BE)
-📁 30-api/
-File Mô tả
-api-conventions.md Chuẩn response, error, pagination
-endpoints-auth.md API Auth
-endpoints-search-trips.md API tìm kiếm chuyến
-endpoints-seat.md API giữ ghế
-endpoints-booking.md API booking
-endpoints-voucher.md API voucher
-endpoints-admin.md API admin
-⚠️ FE không được gọi API chưa có trong docs.
-⚠️ BE không được thay đổi response structure khi chưa cập nhật docs.
+Backend: Node.js, Express.js.
 
-🔹 E. Hướng dẫn phát triển
-📁 40-dev-guide/
-File Mô tả
-setup-local.md Cách chạy local
-env.md Cấu hình biến môi trường
-folder-structure.md Giải thích cấu trúc repo
-coding-conventions.md Quy chuẩn code
-git-workflow.md Quy trình branch/merge
+Database: MongoDB (Mongoose).
 
-🔹 F. Quyết định kỹ thuật (Architecture Decision Records)
-📁 90-decisions/
-Các file trong thư mục này ghi lại:
-Quyết định chọn Prisma + Postgres
-Quy tắc modeling Booking – Ticket – Seat
-Quy tắc giữ ghế (hold time, release rule)
-Mục đích:
-Tránh tranh luận lặp lại
-Ghi nhận lý do thay đổi kiến trúc
+API: RESTful API.
 
-👥 3️⃣ Phân quyền tài liệu trong team 5 người
-👑 Nhóm trưởng (Lead)
-Chịu trách nhiệm:
-Chuẩn hóa Prisma schema
-Kiểm soát API contract
-Kiểm soát git workflow
-Merge & review code
-Cập nhật decision logs
-Lead không cần code nhiều feature, nhưng phải giữ hệ thống ổn định và thống nhất.
-👨‍💻 4 Thành viên còn lại
-Mỗi người:
-Chịu trách nhiệm module của mình
-Viết docs API tương ứng
-Không thay đổi DB hoặc API structure khi chưa cập nhật docs
+📖 Mô tả chi tiết chức năng
+1. Tìm kiếm Chuyến bay & Chuyến tàu
+Hỗ trợ người dùng tra cứu chuyến đi dựa trên các tham số linh hoạt.
 
-🚨 4️⃣ Quy tắc bắt buộc để tránh conflict
+Dữ liệu đầu vào: Điểm đi, điểm đến, ngày khởi hành, số lượng hành khách.
 
-1. Không ai tự tạo bảng DB theo ý mình
-   Chỉ được chỉnh sửa trong schema.prisma đã được thống nhất.
+Xử lý logic: * Kiểm tra tính hợp lệ (ví dụ: ngày khởi hành không được ở quá khứ, điểm đi và đến không được trùng nhau).
 
-2. Không thay đổi API response structure khi chưa cập nhật docs
-3. Không push trực tiếp vào main
-   Workflow chuẩn:
-   feature/<module-name>
-   → pull request vào dev
-   → review
-   → merge 4. Mọi thay đổi quan trọng phải cập nhật docs trước khi merge
+Truy vấn Database động dựa trên phương tiện (Flight/Train).
 
-🔄 5️⃣ Quy trình làm việc chuẩn
-Xem docs trước khi code
-Nếu thiếu → cập nhật docs → thảo luận
-Code theo đúng schema & API contract
-Tạo PR
-Lead review & merge
+Trả về thông tin: Mã chuyến, hãng vận chuyển, lịch trình và giá vé cơ bản.
 
-🎯 6️⃣ Mục tiêu cuối cùng
-Thư mục docs/ không phải để “cho có”.
-Nó là:
-Bộ khung chuẩn hóa toàn hệ thống
-Công cụ giảm conflict
-Cách để team làm việc chuyên nghiệp
-Tài liệu bảo vệ đồ án nếu có chấm điểm
+2. Bộ lọc kết quả nâng cao (Filtering)
+Tối ưu hóa trải nghiệm tìm kiếm giúp người dùng tìm được chuyến đi phù hợp nhất.
+
+Tiêu chí lọc: Giá vé (tăng/giảm), khung giờ khởi hành, hãng vận chuyển, hạng ghế.
+
+Cơ chế xử lý: Thực hiện lọc trực tiếp thông qua Database Query để đảm bảo tốc độ và độ chính xác của dữ liệu.
+
+3. Xem chi tiết & Kiểm tra chỗ khả dụng
+Bước đệm quan trọng trước khi chuyển sang sơ đồ chọn ghế (Seat Map).
+
+Thông tin chi tiết: Hiển thị toàn bộ thông số chuyến đi và số lượng ghế còn trống ước tính.
+
+Lưu ý: Chức năng này lấy dữ liệu tổng quát (Available/Full), logic chọn ghế realtime sẽ được xử lý ở module tiếp theo.
+
+🔄 Luồng xử lý (Search Flow)
+Quy trình:
+
+Trang chủ: User nhập thông tin tìm kiếm.
+
+Kết quả: Hiển thị danh sách (Flight/Train) -> Áp dụng bộ lọc (Filter).
+
+Chi tiết: User chọn chuyến -> Xem chi tiết & Trạng thái ghế.
+
+Chuyển giao: Kết thúc luồng Search và chuyển sang bước chọn ghế (Module Seat).
+
+🎨 Giao diện thực hiện
+Tôi đã thiết kế và triển khai 6 giao diện chính đảm bảo tính Responsive và thân thiện với người dùng:
+
+Trang Đăng ký/Đăng nhập: Validation trực tiếp, giao diện tối giản.
+
+Trang Kết quả (Flight/Train): Bố cục dạng danh sách chuyên nghiệp, tích hợp Sidebar lọc.
+
+Trang Chi tiết chuyến đi: Tập trung vào thông tin quan trọng nhất và nút hành động (Call to action).
+
+Trang Thanh toán thất bại: Thông báo lỗi trực quan và điều hướng hỗ trợ người dùng thử lại.
+
+
+📟 Tài liệu API (API Endpoints)
+GET,/search/flights,Tìm kiếm chuyến bay theo params
+
+GET,/search/trains,Tìm kiếm chuyến tàu theo params
+
+GET,/search/filter,Lấy dữ liệu danh sách đã qua bộ lọc
+
+GET,/trips/:id,Lấy thông tin chi tiết của một chuyến đi
+
+GET,/trips/:id/availability,Kiểm tra tình trạng ghế trống
